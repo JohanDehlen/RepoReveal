@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import csv
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import threading
 import webbrowser
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
+from .domain_checker import (
+    DomainResult,
+    DomainStatus,
+    SUPPORTED_TLDS,
+    check_domain_rdap,
+    normalize_repo_name,
+)
 from .github_client import GitHubSearchError, search_repositories
 from .models import Repository
 from .settings import load_window_geometry, save_window_geometry
@@ -16,11 +24,14 @@ class RepoRevealApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("RepoReveal")
-        self.geometry(load_window_geometry(default="1120x650"))
+        self._saved_window_geometry = load_window_geometry(default="1120x650")
+        self.geometry("1120x650")
         self.minsize(900, 520)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.results: list[Repository] = []
+        self.domain_cache: dict[str, DomainResult] = {}
+        self.domain_check_generation = 0
 
         self.days_var = tk.StringVar(value="7")
         self.stars_var = tk.StringVar(value="10")
@@ -29,6 +40,7 @@ class RepoRevealApp(tk.Tk):
         self.status_var = tk.StringVar(value="Ready.")
 
         self._build_ui()
+        self.after_idle(self._restore_window_geometry)
 
     def _build_ui(self) -> None:
         outer = ttk.Frame(self, padding=12)
@@ -70,10 +82,29 @@ class RepoRevealApp(tk.Tk):
         )
         self.export_button.grid(row=1, column=5, padx=(8, 0), sticky="ew")
 
+        legend = ttk.Frame(outer)
+        legend.pack(fill="x", pady=(0, 4))
+
+        ttk.Label(
+            legend,
+            text="✓ - Available",
+            font=("Segoe UI", 9),
+        ).pack(side="left", padx=(820, 0))
+
         table = ttk.Frame(outer)
         table.pack(fill="both", expand=True)
+        table.rowconfigure(0, weight=1)
+        table.columnconfigure(0, weight=1)
 
-        columns = ("name", "stars", "created", "language", "description")
+        columns = (
+            "name",
+            "stars",
+            "created",
+            "language",
+            "search_term",
+            *SUPPORTED_TLDS,
+            "description",
+        )
         self.tree = ttk.Treeview(
             table,
             columns=columns,
@@ -84,23 +115,38 @@ class RepoRevealApp(tk.Tk):
         self.tree.heading("stars", text="Stars")
         self.tree.heading("created", text="Created")
         self.tree.heading("language", text="Language")
+        self.tree.heading("search_term", text="Search term")
+        for tld in SUPPORTED_TLDS:
+            self.tree.heading(tld, text=f".{tld}")
         self.tree.heading("description", text="Description")
 
-        self.tree.column("name", width=210, anchor="w")
-        self.tree.column("stars", width=75, anchor="e")
-        self.tree.column("created", width=120, anchor="center")
-        self.tree.column("language", width=110, anchor="w")
-        self.tree.column("description", width=520, anchor="w")
+        self.tree.column("name", width=140, minwidth=80, anchor="w", stretch=False)
+        self.tree.column("stars", width=55, minwidth=45, anchor="e", stretch=False)
+        self.tree.column("created", width=85, minwidth=75, anchor="center", stretch=False)
+        self.tree.column("language", width=70, minwidth=55, anchor="w", stretch=False)
+        self.tree.column("search_term", width=110, minwidth=80, anchor="w", stretch=False)
+        for tld in SUPPORTED_TLDS:
+            self.tree.column(tld, width=42, minwidth=38, anchor="center", stretch=False)
+        self.tree.column("description", width=220, minwidth=180, anchor="w", stretch=True)
 
-        scrollbar = ttk.Scrollbar(
+        y_scrollbar = ttk.Scrollbar(
             table,
             orient="vertical",
             command=self.tree.yview,
         )
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        x_scrollbar = ttk.Scrollbar(
+            table,
+            orient="horizontal",
+            command=self.tree.xview,
+        )
+        self.tree.configure(
+            yscrollcommand=y_scrollbar.set,
+            xscrollcommand=x_scrollbar.set,
+        )
 
-        self.tree.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        y_scrollbar.grid(row=0, column=1, sticky="ns")
+        x_scrollbar.grid(row=1, column=0, sticky="ew")
 
         self.tree.bind("<Double-1>", self._open_selected)
 
@@ -114,9 +160,14 @@ class RepoRevealApp(tk.Tk):
             command=self._open_selected,
         ).pack(side="right")
 
+    def _restore_window_geometry(self) -> None:
+        self.update_idletasks()
+        self.geometry(self._saved_window_geometry)
+
     def _on_close(self) -> None:
         save_window_geometry(self.geometry())
         self.destroy()
+
     @staticmethod
     def _labeled_entry(
         parent: ttk.Frame,
@@ -156,6 +207,7 @@ class RepoRevealApp(tk.Tk):
             )
             return
 
+        self.domain_check_generation += 1
         self.search_button.configure(state="disabled")
         self.export_button.configure(state="disabled")
         self.status_var.set("Searching GitHub...")
@@ -188,6 +240,7 @@ class RepoRevealApp(tk.Tk):
 
         for index, repo in enumerate(results):
             created = repo.created_at[:10]
+            search_term = normalize_repo_name(repo.name)
             self.tree.insert(
                 "",
                 "end",
@@ -197,15 +250,206 @@ class RepoRevealApp(tk.Tk):
                     f"{repo.stars:,}",
                     created,
                     repo.language or "-",
+                    search_term or "-",
+                    *("…" for _ in SUPPORTED_TLDS),
                     repo.description,
                 ),
             )
+
+        self._autofit_columns()
 
         self.search_button.configure(state="normal")
         self.export_button.configure(
             state="normal" if results else "disabled",
         )
-        self.status_var.set(f"Found {len(results)} repositories.")
+
+        if results:
+            self.status_var.set(
+                f"Found {len(results)} repositories. Checking domains..."
+            )
+            self._start_domain_checks(results)
+        else:
+            self.status_var.set("Found 0 repositories.")
+
+    def _autofit_columns(self) -> None:
+        tree_font = tkfont.nametofont("TkDefaultFont")
+        heading_font = tkfont.nametofont("TkHeadingFont")
+
+        # Keep data columns only as wide as needed, with caps on fields that can
+        # contain unusually long names. Description is intentionally excluded
+        # and stretches to consume the remaining window width.
+        caps = {
+            "name": 260,
+            "stars": 80,
+            "created": 105,
+            "language": 120,
+            "search_term": 230,
+        }
+        padding = {
+            "name": 18,
+            "stars": 16,
+            "created": 16,
+            "language": 18,
+            "search_term": 18,
+        }
+
+        for column in ("name", "stars", "created", "language", "search_term"):
+            heading = self.tree.heading(column, "text")
+            width = heading_font.measure(heading) + padding[column]
+
+            for iid in self.tree.get_children():
+                value = str(self.tree.set(iid, column))
+                width = max(width, tree_font.measure(value) + padding[column])
+
+            self.tree.column(
+                column,
+                width=min(width, caps[column]),
+                stretch=False,
+            )
+
+        for tld in SUPPORTED_TLDS:
+            heading_width = heading_font.measure(f".{tld}") + 14
+            self.tree.column(
+                tld,
+                width=max(38, heading_width),
+                stretch=False,
+            )
+
+    def _start_domain_checks(self, results: list[Repository]) -> None:
+        self.domain_check_generation += 1
+        generation = self.domain_check_generation
+
+        thread = threading.Thread(
+            target=self._domain_check_worker,
+            args=(generation, results),
+            daemon=True,
+        )
+        thread.start()
+
+    def _domain_check_worker(
+        self,
+        generation: int,
+        results: list[Repository],
+    ) -> None:
+        jobs: dict[Future[DomainResult], tuple[int, str]] = {}
+        cached_count = 0
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            for row_index, repo in enumerate(results):
+                label = normalize_repo_name(repo.name)
+                if not label:
+                    continue
+
+                for tld in SUPPORTED_TLDS:
+                    domain = f"{label}.{tld}"
+                    cached = self.domain_cache.get(domain)
+                    if cached is not None:
+                        cached_count += 1
+                        self.after(
+                            0,
+                            self._update_domain_cell,
+                            generation,
+                            row_index,
+                            tld,
+                            cached,
+                        )
+                        continue
+
+                    future = executor.submit(check_domain_rdap, domain)
+                    jobs[future] = (row_index, tld)
+
+            completed = 0
+            total = len(jobs)
+
+            if total == 0:
+                self.after(0, self._domain_checks_complete, generation, cached_count)
+                return
+
+            for future in as_completed(jobs):
+                row_index, tld = jobs[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = DomainResult(
+                        "",
+                        DomainStatus.UNKNOWN,
+                        type(exc).__name__,
+                    )
+
+                if result.domain:
+                    self.domain_cache[result.domain] = result
+
+                completed += 1
+                self.after(
+                    0,
+                    self._update_domain_cell,
+                    generation,
+                    row_index,
+                    tld,
+                    result,
+                )
+                if completed % 5 == 0 or completed == total:
+                    self.after(
+                        0,
+                        self._update_domain_progress,
+                        generation,
+                        completed,
+                        total,
+                        cached_count,
+                    )
+
+        self.after(
+            0,
+            self._domain_checks_complete,
+            generation,
+            cached_count + total,
+        )
+
+    def _update_domain_cell(
+        self,
+        generation: int,
+        row_index: int,
+        tld: str,
+        result: DomainResult,
+    ) -> None:
+        if generation != self.domain_check_generation:
+            return
+
+        iid = str(row_index)
+        if not self.tree.exists(iid):
+            return
+
+        symbol = "✓" if result.status is DomainStatus.AVAILABLE else ""
+        self.tree.set(iid, tld, symbol)
+
+    def _update_domain_progress(
+        self,
+        generation: int,
+        completed: int,
+        total: int,
+        cached_count: int,
+    ) -> None:
+        if generation != self.domain_check_generation:
+            return
+
+        overall_completed = cached_count + completed
+        overall_total = cached_count + total
+        self.status_var.set(
+            f"Found {len(self.results)} repositories. "
+            f"Domain checks: {overall_completed}/{overall_total}"
+        )
+
+    def _domain_checks_complete(
+        self,
+        generation: int,
+        checked_count: int,
+    ) -> None:
+        if generation != self.domain_check_generation:
+            return
+        self.status_var.set(
+            f"Found {len(self.results)} repositories. "
+            f"Domain checks complete ({checked_count})."
+        )
 
     def _search_failed(self, message: str) -> None:
         self.search_button.configure(state="normal")
@@ -249,11 +493,19 @@ class RepoRevealApp(tk.Tk):
                     "stars",
                     "created_at",
                     "language",
+                    "search_term",
+                    *SUPPORTED_TLDS,
                     "description",
                     "github_url",
                 ]
             )
-            for repo in self.results:
+
+            for index, repo in enumerate(self.results):
+                iid = str(index)
+                domain_values = [
+                    self.tree.set(iid, tld) if self.tree.exists(iid) else ""
+                    for tld in SUPPORTED_TLDS
+                ]
                 writer.writerow(
                     [
                         repo.name,
@@ -261,12 +513,16 @@ class RepoRevealApp(tk.Tk):
                         repo.stars,
                         repo.created_at,
                         repo.language,
+                        normalize_repo_name(repo.name),
+                        *domain_values,
                         repo.description,
                         repo.html_url,
                     ]
                 )
 
-        self.status_var.set(f"Exported {len(self.results)} rows to {destination.name}.")
+        self.status_var.set(
+            f"Exported {len(self.results)} rows to {destination.name}."
+        )
 
 
 def main() -> None:
