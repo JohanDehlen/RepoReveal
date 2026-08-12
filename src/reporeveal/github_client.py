@@ -23,6 +23,7 @@ def build_search_query(
     days: int,
     min_stars: int,
     language: str = "",
+    category: str = "",
     now: datetime | None = None,
 ) -> str:
     if days < 1:
@@ -33,7 +34,15 @@ def build_search_query(
     now = now or datetime.now(timezone.utc)
     created_after = (now - timedelta(days=days)).date().isoformat()
 
-    parts = [f"created:>={created_after}", f"stars:>={min_stars}"]
+    parts: list[str] = []
+
+    category = category.strip()
+    if category:
+        parts.append(category)
+
+    parts.extend(
+        [f"created:>={created_after}", f"stars:>={min_stars}"]
+    )
     language = language.strip()
     if language:
         parts.append(f"language:{language}")
@@ -58,6 +67,7 @@ def search_repositories(
     days: int = 7,
     min_stars: int = 10,
     language: str = "",
+    category: str = "",
     max_results: int = 50,
     token: str | None = None,
     timeout: float = 20.0,
@@ -69,6 +79,7 @@ def search_repositories(
         days=days,
         min_stars=min_stars,
         language=language,
+        category=category,
     )
     params = urlencode(
         {

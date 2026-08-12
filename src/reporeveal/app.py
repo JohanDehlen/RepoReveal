@@ -17,10 +17,13 @@ from .domain_checker import (
 )
 from .github_client import GitHubSearchError, search_repositories
 from .models import Repository
+from .scoring import score_repository
 from .settings import load_window_geometry, save_window_geometry
 
 
 class RepoRevealApp(tk.Tk):
+    DOMAIN_FINALIST_LIMIT = 20
+
     def __init__(self) -> None:
         super().__init__()
         self.title("RepoReveal")
@@ -36,8 +39,13 @@ class RepoRevealApp(tk.Tk):
         self.days_var = tk.StringVar(value="7")
         self.stars_var = tk.StringVar(value="10")
         self.language_var = tk.StringVar(value="")
+        self.category_var = tk.StringVar(value="")
         self.max_results_var = tk.StringVar(value="50")
+        self.domain_checks_var = tk.StringVar(value="20")
+        self.domain_check_limit = 20
         self.status_var = tk.StringVar(value="Ready.")
+        self.score_explanation_var = tk.StringVar(value="")
+        self.com_checked_rows: set[int] = set()
 
         self._build_ui()
         self.after_idle(self._restore_window_geometry)
@@ -64,15 +72,23 @@ class RepoRevealApp(tk.Tk):
 
         self._labeled_entry(controls, "Created within days", self.days_var, 0, 7)
         self._labeled_entry(controls, "Minimum stars", self.stars_var, 1, 7)
-        self._labeled_entry(controls, "Language (optional)", self.language_var, 2, 16)
-        self._labeled_entry(controls, "Max results", self.max_results_var, 3, 7)
+        self._labeled_entry(controls, "Language (optional)", self.language_var, 2, 12)
+        self._labeled_entry(controls, "Category (optional)", self.category_var, 3, 16)
+        self._labeled_entry(controls, "Max results", self.max_results_var, 4, 7)
+        self._labeled_entry(
+            controls,
+            "Live domain checks",
+            self.domain_checks_var,
+            5,
+            7,
+        )
 
         self.search_button = ttk.Button(
             controls,
             text="Search GitHub",
             command=self._start_search,
         )
-        self.search_button.grid(row=1, column=4, padx=(12, 0), sticky="ew")
+        self.search_button.grid(row=1, column=6, padx=(12, 0), sticky="ew")
 
         self.export_button = ttk.Button(
             controls,
@@ -80,7 +96,7 @@ class RepoRevealApp(tk.Tk):
             command=self._export_csv,
             state="disabled",
         )
-        self.export_button.grid(row=1, column=5, padx=(8, 0), sticky="ew")
+        self.export_button.grid(row=1, column=7, padx=(8, 0), sticky="ew")
 
         legend = ttk.Frame(outer)
         legend.pack(fill="x", pady=(0, 4))
@@ -97,6 +113,7 @@ class RepoRevealApp(tk.Tk):
         table.columnconfigure(0, weight=1)
 
         columns = (
+            "score",
             "name",
             "stars",
             "created",
@@ -111,6 +128,7 @@ class RepoRevealApp(tk.Tk):
             show="headings",
             selectmode="browse",
         )
+        self.tree.heading("score", text="Score")
         self.tree.heading("name", text="Repository")
         self.tree.heading("stars", text="Stars")
         self.tree.heading("created", text="Created")
@@ -120,6 +138,7 @@ class RepoRevealApp(tk.Tk):
             self.tree.heading(tld, text=f".{tld}")
         self.tree.heading("description", text="Description")
 
+        self.tree.column("score", width=55, minwidth=50, anchor="center", stretch=False)
         self.tree.column("name", width=140, minwidth=80, anchor="w", stretch=False)
         self.tree.column("stars", width=55, minwidth=45, anchor="e", stretch=False)
         self.tree.column("created", width=85, minwidth=75, anchor="center", stretch=False)
@@ -149,11 +168,16 @@ class RepoRevealApp(tk.Tk):
         x_scrollbar.grid(row=1, column=0, sticky="ew")
 
         self.tree.bind("<Double-1>", self._open_selected)
+        self.tree.bind("<<TreeviewSelect>>", self._update_score_explanation)
 
         footer = ttk.Frame(outer)
         footer.pack(fill="x", pady=(10, 0))
 
         ttk.Label(footer, textvariable=self.status_var).pack(side="left")
+        ttk.Label(
+            footer,
+            textvariable=self.score_explanation_var,
+        ).pack(side="left", padx=(18, 0))
         ttk.Button(
             footer,
             text="Open selected repository",
@@ -194,20 +218,27 @@ class RepoRevealApp(tk.Tk):
             days = int(self.days_var.get())
             stars = int(self.stars_var.get())
             max_results = int(self.max_results_var.get())
+            domain_checks = int(self.domain_checks_var.get())
             if days < 1:
                 raise ValueError
             if stars < 0:
                 raise ValueError
             if not 1 <= max_results <= 100:
                 raise ValueError
+            if not 0 <= domain_checks <= max_results:
+                raise ValueError
         except ValueError:
             messagebox.showerror(
                 "Invalid search",
-                "Use whole numbers: days >= 1, stars >= 0, and max results 1-100.",
+                "Use whole numbers: days >= 1, stars >= 0, max results 1-100, "
+                "and live domain checks between 0 and max results.",
             )
             return
 
+        self.domain_check_limit = domain_checks
+
         self.domain_check_generation += 1
+        self.com_checked_rows.clear()
         self.search_button.configure(state="disabled")
         self.export_button.configure(state="disabled")
         self.status_var.set("Searching GitHub...")
@@ -218,6 +249,7 @@ class RepoRevealApp(tk.Tk):
                 "days": days,
                 "min_stars": stars,
                 "language": self.language_var.get(),
+                "category": self.category_var.get(),
                 "max_results": max_results,
             },
             daemon=True,
@@ -241,21 +273,28 @@ class RepoRevealApp(tk.Tk):
         for index, repo in enumerate(results):
             created = repo.created_at[:10]
             search_term = normalize_repo_name(repo.name)
+            initial_score = score_repository(
+                repo,
+                search_term,
+                com_available=False,
+            ).candidate_score
             self.tree.insert(
                 "",
                 "end",
                 iid=str(index),
                 values=(
+                    initial_score,
                     repo.full_name,
                     f"{repo.stars:,}",
                     created,
                     repo.language or "-",
                     search_term or "-",
-                    *("…" for _ in SUPPORTED_TLDS),
+                    *("" for _ in SUPPORTED_TLDS),
                     repo.description,
                 ),
             )
 
+        self._sort_by_score()
         self._autofit_columns()
 
         self.search_button.configure(state="normal")
@@ -264,10 +303,18 @@ class RepoRevealApp(tk.Tk):
         )
 
         if results:
-            self.status_var.set(
-                f"Found {len(results)} repositories. Checking domains..."
-            )
-            self._start_domain_checks(results)
+            finalist_count = min(len(results), self.domain_check_limit)
+            if finalist_count:
+                self.status_var.set(
+                    f"Found {len(results)} repositories. "
+                    f"Checking domains for top {finalist_count} candidates..."
+                )
+                self._start_domain_checks(results)
+            else:
+                self.status_var.set(
+                    f"Found {len(results)} repositories. "
+                    "Ranking complete; live domain checks disabled."
+                )
         else:
             self.status_var.set("Found 0 repositories.")
 
@@ -279,6 +326,7 @@ class RepoRevealApp(tk.Tk):
         # contain unusually long names. Description is intentionally excluded
         # and stretches to consume the remaining window width.
         caps = {
+            "score": 65,
             "name": 260,
             "stars": 80,
             "created": 105,
@@ -286,6 +334,7 @@ class RepoRevealApp(tk.Tk):
             "search_term": 230,
         }
         padding = {
+            "score": 14,
             "name": 18,
             "stars": 16,
             "created": 16,
@@ -293,7 +342,7 @@ class RepoRevealApp(tk.Tk):
             "search_term": 18,
         }
 
-        for column in ("name", "stars", "created", "language", "search_term"):
+        for column in ("score", "name", "stars", "created", "language", "search_term"):
             heading = self.tree.heading(column, "text")
             width = heading_font.measure(heading) + padding[column]
 
@@ -334,8 +383,11 @@ class RepoRevealApp(tk.Tk):
         jobs: dict[Future[DomainResult], tuple[int, str]] = {}
         cached_count = 0
 
+        finalist_iids = list(self.tree.get_children())[: self.domain_check_limit]
+        finalist_rows = [(int(iid), results[int(iid)]) for iid in finalist_iids]
+
         with ThreadPoolExecutor(max_workers=4) as executor:
-            for row_index, repo in enumerate(results):
+            for row_index, repo in finalist_rows:
                 label = normalize_repo_name(repo.name)
                 if not label:
                     continue
@@ -422,6 +474,18 @@ class RepoRevealApp(tk.Tk):
         symbol = "✓" if result.status is DomainStatus.AVAILABLE else ""
         self.tree.set(iid, tld, symbol)
 
+        if tld == "com" and 0 <= row_index < len(self.results):
+            self.com_checked_rows.add(row_index)
+
+            repo = self.results[row_index]
+            search_term = normalize_repo_name(repo.name)
+            score = score_repository(
+                repo,
+                search_term,
+                com_available=result.status is DomainStatus.AVAILABLE,
+            ).total
+            self.tree.set(iid, "score", score)
+
     def _update_domain_progress(
         self,
         generation: int,
@@ -446,15 +510,73 @@ class RepoRevealApp(tk.Tk):
     ) -> None:
         if generation != self.domain_check_generation:
             return
+        self._sort_by_score()
         self.status_var.set(
             f"Found {len(self.results)} repositories. "
-            f"Domain checks complete ({checked_count})."
+            f"Domain checks complete for top "
+            f"{min(len(self.results), self.domain_check_limit)} "
+            f"candidates ({checked_count} checks)."
         )
+
+    def _sort_by_score(self) -> None:
+        items = list(self.tree.get_children())
+        items.sort(
+            key=lambda iid: int(self.tree.set(iid, "score") or 0),
+            reverse=True,
+        )
+        for position, iid in enumerate(items):
+            self.tree.move(iid, "", position)
 
     def _search_failed(self, message: str) -> None:
         self.search_button.configure(state="normal")
         self.status_var.set("Search failed.")
         messagebox.showerror("GitHub search failed", message)
+
+    def _update_score_explanation(self, _event: object | None = None) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            self.score_explanation_var.set("")
+            return
+
+        iid = selection[0]
+        try:
+            row_index = int(iid)
+            repo = self.results[row_index]
+        except (IndexError, ValueError):
+            self.score_explanation_var.set("")
+            return
+
+        search_term = normalize_repo_name(repo.name)
+        com_checked = row_index in self.com_checked_rows
+        com_available = (
+            com_checked
+            and self.tree.set(iid, "com") == "✓"
+        )
+
+        breakdown = score_repository(
+            repo,
+            search_term,
+            com_available=com_available,
+        )
+
+        components = (
+            f"Candidate {breakdown.candidate_score}/75 = "
+            f"Name {breakdown.name_quality}/30 + "
+            f"Brand {breakdown.brandability}/20 + "
+            f"Momentum {breakdown.momentum}/25 - "
+            f"Penalties {breakdown.penalties}"
+        )
+
+        if com_checked:
+            self.score_explanation_var.set(
+                f"{components}    |    "
+                f"Opportunity {breakdown.total}/100 "
+                f"(domain bonus +{breakdown.com_bonus})"
+            )
+        else:
+            self.score_explanation_var.set(
+                f"{components}    |    Opportunity not evaluated"
+            )
 
     def _selected_repository(self) -> Repository | None:
         selection = self.tree.selection()
@@ -488,6 +610,7 @@ class RepoRevealApp(tk.Tk):
             writer = csv.writer(handle)
             writer.writerow(
                 [
+                    "score",
                     "name",
                     "full_name",
                     "stars",
@@ -508,6 +631,7 @@ class RepoRevealApp(tk.Tk):
                 ]
                 writer.writerow(
                     [
+                        self.tree.set(iid, "score") if self.tree.exists(iid) else "",
                         repo.name,
                         repo.full_name,
                         repo.stars,
