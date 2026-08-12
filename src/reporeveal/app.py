@@ -15,6 +15,12 @@ from .domain_checker import (
     check_domain_rdap,
     normalize_repo_name,
 )
+from .collision_client import (
+    CollisionMatch,
+    CollisionResult,
+    GitHubCollisionError,
+    check_github_collision,
+)
 from .github_client import GitHubSearchError, search_repositories
 from .models import Repository
 from .scoring import score_repository
@@ -32,7 +38,9 @@ class RepoRevealApp(tk.Tk):
 
         self.results: list[Repository] = []
         self.domain_cache: dict[str, DomainResult] = {}
+        self.collision_cache: dict[str, CollisionResult] = {}
         self.domain_check_generation = 0
+        self.collision_check_generation = 0
 
         self.days_var = tk.StringVar(value="7")
         self.stars_var = tk.StringVar(value="10")
@@ -111,6 +119,33 @@ class RepoRevealApp(tk.Tk):
         )
         self.export_button.grid(row=1, column=8, padx=(8, 0), sticky="ew")
 
+        name_check_bar = ttk.Frame(outer)
+        name_check_bar.pack(fill="x", pady=(0, 5))
+
+        self.collision_button = ttk.Button(
+            name_check_bar,
+            text="Check selected GitHub name",
+            command=self._start_selected_collision_check,
+        )
+        self.collision_button.pack(side="left")
+
+        self.collision_matches_button = ttk.Button(
+            name_check_bar,
+            text="View GitHub name matches",
+            command=self._view_selected_collision_matches,
+            state="disabled",
+        )
+        self.collision_matches_button.pack(side="left", padx=(8, 0))
+
+        ttk.Label(
+            name_check_bar,
+            text=(
+                "Checks whether the selected search term is already used "
+                "by other exact-name GitHub repositories or an exact "
+                "GitHub account."
+            ),
+        ).pack(side="left", padx=(10, 0))
+
         legend = ttk.Frame(outer)
         legend.pack(fill="x", pady=(0, 4))
 
@@ -132,6 +167,7 @@ class RepoRevealApp(tk.Tk):
             "created",
             "language",
             "search_term",
+            "collision",
             *SUPPORTED_TLDS,
             "description",
         )
@@ -147,6 +183,7 @@ class RepoRevealApp(tk.Tk):
         self.tree.heading("created", text="Created")
         self.tree.heading("language", text="Language")
         self.tree.heading("search_term", text="Search term")
+        self.tree.heading("collision", text="GitHub name use")
         for tld in SUPPORTED_TLDS:
             self.tree.heading(tld, text=f".{tld}")
         self.tree.heading("description", text="Description")
@@ -157,6 +194,7 @@ class RepoRevealApp(tk.Tk):
         self.tree.column("created", width=85, minwidth=75, anchor="center", stretch=False)
         self.tree.column("language", width=70, minwidth=55, anchor="w", stretch=False)
         self.tree.column("search_term", width=110, minwidth=80, anchor="w", stretch=False)
+        self.tree.column("collision", width=100, minwidth=85, anchor="center", stretch=False)
         for tld in SUPPORTED_TLDS:
             self.tree.column(tld, width=42, minwidth=38, anchor="center", stretch=False)
         self.tree.column("description", width=220, minwidth=180, anchor="w", stretch=True)
@@ -196,6 +234,7 @@ class RepoRevealApp(tk.Tk):
             text="Open selected repository",
             command=self._open_selected,
         ).pack(side="right")
+
 
     def _restore_window_geometry(self) -> None:
         self.update_idletasks()
@@ -311,6 +350,7 @@ class RepoRevealApp(tk.Tk):
                     created,
                     repo.language or "-",
                     search_term or "-",
+                    "",
                     *("" for _ in SUPPORTED_TLDS),
                     repo.description,
                 ),
@@ -367,6 +407,7 @@ class RepoRevealApp(tk.Tk):
             "created": 105,
             "language": 120,
             "search_term": 230,
+            "collision": 125,
         }
         padding = {
             "score": 14,
@@ -375,9 +416,18 @@ class RepoRevealApp(tk.Tk):
             "created": 16,
             "language": 18,
             "search_term": 18,
+            "collision": 18,
         }
 
-        for column in ("score", "name", "stars", "created", "language", "search_term"):
+        for column in (
+            "score",
+            "name",
+            "stars",
+            "created",
+            "language",
+            "search_term",
+            "collision",
+        ):
             heading = self.tree.heading(column, "text")
             width = heading_font.measure(heading) + padding[column]
 
@@ -572,6 +622,7 @@ class RepoRevealApp(tk.Tk):
 
     def _update_score_explanation(self, _event: object | None = None) -> None:
         selection = self.tree.selection()
+        self._update_collision_matches_button(selection)
         if not selection:
             self.score_explanation_var.set("")
             return
@@ -616,6 +667,253 @@ class RepoRevealApp(tk.Tk):
                 f"{components}    |    Opportunity not evaluated"
             )
 
+
+    @staticmethod
+    def _collision_summary(result: CollisionResult) -> str:
+        parts: list[str] = []
+        if result.other_repositories:
+            parts.append(f"Repo ×{result.other_repositories}")
+        if result.exact_account:
+            parts.append("Account")
+        return " + ".join(parts) if parts else "Clear"
+
+    def _start_selected_collision_check(self) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo(
+                "GitHub name check",
+                "Select a result first.",
+            )
+            return
+
+        iid = selection[0]
+        try:
+            row_index = int(iid)
+            repo = self.results[row_index]
+        except (IndexError, ValueError):
+            return
+
+        term = normalize_repo_name(repo.name)
+        if not term:
+            return
+
+        cached = self.collision_cache.get(term)
+        if cached is not None:
+            self._collision_check_complete(
+                self.collision_check_generation,
+                row_index,
+                cached,
+                cached=True,
+            )
+            return
+
+        self.collision_check_generation += 1
+        generation = self.collision_check_generation
+
+        self.collision_button.configure(state="disabled")
+        self.status_var.set(
+            f"Checking GitHub name use for {term}..."
+        )
+
+        self.after(
+            15000,
+            self._collision_check_timeout,
+            generation,
+            term,
+        )
+
+        thread = threading.Thread(
+            target=self._collision_check_worker,
+            args=(generation, row_index, term, repo.full_name),
+            daemon=True,
+        )
+        thread.start()
+
+    def _collision_check_worker(
+        self,
+        generation: int,
+        row_index: int,
+        term: str,
+        current_full_name: str,
+    ) -> None:
+        try:
+            result = check_github_collision(
+                term,
+                current_full_name=current_full_name,
+                timeout=8.0,
+            )
+        except (GitHubCollisionError, ValueError) as exc:
+            self.after(
+                0,
+                self._collision_check_failed,
+                generation,
+                str(exc),
+            )
+            return
+
+        self.after(
+            0,
+            self._collision_check_complete,
+            generation,
+            row_index,
+            result,
+            False,
+        )
+
+    def _collision_check_complete(
+        self,
+        generation: int,
+        row_index: int,
+        result: CollisionResult,
+        cached: bool = False,
+    ) -> None:
+        if generation != self.collision_check_generation:
+            return
+
+        self.collision_cache[result.search_term] = result
+        self.collision_button.configure(state="normal")
+        self._update_collision_matches_button(self.tree.selection())
+
+        iid = str(row_index)
+        summary = self._collision_summary(result)
+        if self.tree.exists(iid):
+            self.tree.set(iid, "collision", summary)
+            self._autofit_columns()
+
+        details: list[str] = []
+        if result.other_repositories:
+            details.append(
+                f"{result.other_repositories} other exact-name repos"
+            )
+        if result.exact_account:
+            details.append("exact GitHub account exists")
+        if not details:
+            details.append("no exact GitHub repo/account collision found")
+
+        suffix = " (cached)" if cached else ""
+        self.status_var.set(
+            f"{result.search_term}: {', '.join(details)}{suffix}."
+        )
+
+    def _collision_check_failed(
+        self,
+        generation: int,
+        message: str,
+    ) -> None:
+        if generation != self.collision_check_generation:
+            return
+
+        self.collision_button.configure(state="normal")
+        self.status_var.set("GitHub name check failed.")
+        messagebox.showerror(
+            "GitHub name check failed",
+            message,
+        )
+
+    def _collision_check_timeout(
+        self,
+        generation: int,
+        term: str,
+    ) -> None:
+        if generation != self.collision_check_generation:
+            return
+
+        self.collision_check_generation += 1
+        self.collision_button.configure(state="normal")
+        self.status_var.set(
+            f"GitHub name check timed out for {term}. Try again."
+        )
+
+    def _update_collision_matches_button(
+        self,
+        selection: tuple[str, ...] | list[str],
+    ) -> None:
+        state = "disabled"
+
+        if selection:
+            try:
+                row_index = int(selection[0])
+                repo = self.results[row_index]
+                term = normalize_repo_name(repo.name)
+                if term in self.collision_cache:
+                    state = "normal"
+            except (IndexError, ValueError):
+                pass
+
+        self.collision_matches_button.configure(state=state)
+
+    def _view_selected_collision_matches(self) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            return
+
+        try:
+            row_index = int(selection[0])
+            repo = self.results[row_index]
+        except (IndexError, ValueError):
+            return
+
+        term = normalize_repo_name(repo.name)
+        result = self.collision_cache.get(term)
+        if result is None:
+            messagebox.showinfo("GitHub name matches", "Check the selected GitHub name first.")
+            return
+
+        details: list[str] = []
+        if result.other_repositories:
+            details.append(
+                f"{result.other_repositories} other exact-name repos"
+            )
+        if result.exact_account:
+            details.append("exact GitHub account exists")
+        if not details:
+            details.append("no exact GitHub repo/account collision found")
+
+        self.status_var.set(
+            f"{result.search_term}: {', '.join(details)}. "
+            f"Viewing GitHub name matches for {result.search_term}."
+        )
+
+        matches = getattr(result, "repository_matches", ())
+        if not matches:
+            messagebox.showinfo("GitHub name matches", f"No stored exact-name repository matches for {term}.")
+            return
+
+        window = tk.Toplevel(self)
+        window.title(f"GitHub name matches - {term}")
+        window.geometry("1050x520")
+        frame = ttk.Frame(window, padding=10)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"{len(matches)} exact-name GitHub repository matches for {term}").pack(anchor="w", pady=(0, 8))
+
+        columns = ("repository", "stars", "created", "description")
+        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        for column, title in zip(columns, ("Repository", "Stars", "Created", "Description")):
+            tree.heading(column, text=title)
+        tree.column("repository", width=240, anchor="w")
+        tree.column("stars", width=70, anchor="e")
+        tree.column("created", width=100, anchor="center")
+        tree.column("description", width=580, anchor="w")
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        for index, match in enumerate(matches):
+            tree.insert("", "end", iid=str(index), values=(match.full_name, match.stars, match.created_at[:10], match.description))
+
+        def open_match(_event: object | None = None) -> None:
+            selected = tree.selection()
+            if not selected:
+                return
+            try:
+                match = matches[int(selected[0])]
+            except (IndexError, ValueError):
+                return
+            webbrowser.open(match.html_url)
+
+        tree.bind("<Double-1>", open_match)
+
     def _selected_repository(self) -> Repository | None:
         selection = self.tree.selection()
         if not selection:
@@ -655,6 +953,7 @@ class RepoRevealApp(tk.Tk):
                     "created_at",
                     "language",
                     "search_term",
+                    "github_collision",
                     *SUPPORTED_TLDS,
                     "description",
                     "github_url",
@@ -678,6 +977,7 @@ class RepoRevealApp(tk.Tk):
                         repo.created_at,
                         repo.language,
                         normalize_repo_name(repo.name),
+                        self.tree.set(iid, "collision"),
                         *domain_values,
                         repo.description,
                         repo.html_url,
