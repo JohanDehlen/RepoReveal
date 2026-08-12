@@ -72,22 +72,14 @@ def search_repositories(
     token: str | None = None,
     timeout: float = 20.0,
 ) -> list[Repository]:
-    if not 1 <= max_results <= 100:
-        raise ValueError("max_results must be between 1 and 100")
+    if not 1 <= max_results <= 300:
+        raise ValueError("max_results must be between 1 and 300")
 
     query = build_search_query(
         days=days,
         min_stars=min_stars,
         language=language,
         category=category,
-    )
-    params = urlencode(
-        {
-            "q": query,
-            "sort": "stars",
-            "order": "desc",
-            "per_page": max_results,
-        }
     )
 
     headers = {
@@ -99,27 +91,73 @@ def search_repositories(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    request = Request(f"{API_URL}?{params}", headers=headers)
+    repositories: list[Repository] = []
+    seen: set[str] = set()
+    page = 1
 
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
+    while len(repositories) < max_results:
+        remaining = max_results - len(repositories)
+        per_page = min(100, remaining)
+
+        params = urlencode(
+            {
+                "q": query,
+                "sort": "stars",
+                "order": "desc",
+                "per_page": per_page,
+                "page": page,
+            }
+        )
+        request = Request(f"{API_URL}?{params}", headers=headers)
+
         try:
-            detail = json.loads(exc.read().decode("utf-8")).get("message", "")
-        except Exception:
-            detail = ""
-        message = f"GitHub returned HTTP {exc.code}"
-        if detail:
-            message += f": {detail}"
-        raise GitHubSearchError(message) from exc
-    except URLError as exc:
-        raise GitHubSearchError(f"Could not reach GitHub: {exc.reason}") from exc
-    except (json.JSONDecodeError, OSError) as exc:
-        raise GitHubSearchError(f"Invalid response from GitHub: {exc}") from exc
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.load(response)
+        except HTTPError as exc:
+            try:
+                detail = json.loads(exc.read().decode("utf-8")).get(
+                    "message",
+                    "",
+                )
+            except Exception:
+                detail = ""
+            message = f"GitHub returned HTTP {exc.code}"
+            if detail:
+                message += f": {detail}"
+            raise GitHubSearchError(message) from exc
+        except URLError as exc:
+            raise GitHubSearchError(
+                f"Could not reach GitHub: {exc.reason}"
+            ) from exc
+        except (json.JSONDecodeError, OSError) as exc:
+            raise GitHubSearchError(
+                f"Invalid response from GitHub: {exc}"
+            ) from exc
 
-    items = payload.get("items")
-    if not isinstance(items, list):
-        raise GitHubSearchError("GitHub response did not contain a repository list.")
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise GitHubSearchError(
+                "GitHub response did not contain a repository list."
+            )
 
-    return [_parse_repository(item) for item in items if isinstance(item, dict)]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            repo = _parse_repository(item)
+            identity = repo.full_name or repo.html_url or repo.name
+            if identity in seen:
+                continue
+
+            seen.add(identity)
+            repositories.append(repo)
+
+            if len(repositories) >= max_results:
+                break
+
+        if len(items) < per_page:
+            break
+
+        page += 1
+
+    return repositories

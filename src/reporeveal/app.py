@@ -22,8 +22,6 @@ from .settings import load_window_geometry, save_window_geometry
 
 
 class RepoRevealApp(tk.Tk):
-    DOMAIN_FINALIST_LIMIT = 20
-
     def __init__(self) -> None:
         super().__init__()
         self.title("RepoReveal")
@@ -40,9 +38,11 @@ class RepoRevealApp(tk.Tk):
         self.stars_var = tk.StringVar(value="10")
         self.language_var = tk.StringVar(value="")
         self.category_var = tk.StringVar(value="")
-        self.max_results_var = tk.StringVar(value="50")
+        self.candidate_pool_var = tk.StringVar(value="100")
         self.domain_checks_var = tk.StringVar(value="20")
+        self.final_results_var = tk.StringVar(value="10")
         self.domain_check_limit = 20
+        self.final_result_limit = 10
         self.status_var = tk.StringVar(value="Ready.")
         self.score_explanation_var = tk.StringVar(value="")
         self.com_checked_rows: set[int] = set()
@@ -72,14 +72,27 @@ class RepoRevealApp(tk.Tk):
 
         self._labeled_entry(controls, "Created within days", self.days_var, 0, 7)
         self._labeled_entry(controls, "Minimum stars", self.stars_var, 1, 7)
-        self._labeled_entry(controls, "Language (optional)", self.language_var, 2, 12)
-        self._labeled_entry(controls, "Category (optional)", self.category_var, 3, 16)
-        self._labeled_entry(controls, "Max results", self.max_results_var, 4, 7)
+        self._labeled_entry(controls, "Language (optional)", self.language_var, 2, 11)
+        self._labeled_entry(controls, "Category (optional)", self.category_var, 3, 14)
+        self._labeled_entry(
+            controls,
+            "Candidate pool",
+            self.candidate_pool_var,
+            4,
+            7,
+        )
         self._labeled_entry(
             controls,
             "Live domain checks",
             self.domain_checks_var,
             5,
+            7,
+        )
+        self._labeled_entry(
+            controls,
+            "Final results",
+            self.final_results_var,
+            6,
             7,
         )
 
@@ -88,7 +101,7 @@ class RepoRevealApp(tk.Tk):
             text="Search GitHub",
             command=self._start_search,
         )
-        self.search_button.grid(row=1, column=6, padx=(12, 0), sticky="ew")
+        self.search_button.grid(row=1, column=7, padx=(12, 0), sticky="ew")
 
         self.export_button = ttk.Button(
             controls,
@@ -96,7 +109,7 @@ class RepoRevealApp(tk.Tk):
             command=self._export_csv,
             state="disabled",
         )
-        self.export_button.grid(row=1, column=7, padx=(8, 0), sticky="ew")
+        self.export_button.grid(row=1, column=8, padx=(8, 0), sticky="ew")
 
         legend = ttk.Frame(outer)
         legend.pack(fill="x", pady=(0, 4))
@@ -217,25 +230,34 @@ class RepoRevealApp(tk.Tk):
         try:
             days = int(self.days_var.get())
             stars = int(self.stars_var.get())
-            max_results = int(self.max_results_var.get())
+            candidate_pool = int(self.candidate_pool_var.get())
             domain_checks = int(self.domain_checks_var.get())
+            final_results = int(self.final_results_var.get())
+
             if days < 1:
                 raise ValueError
             if stars < 0:
                 raise ValueError
-            if not 1 <= max_results <= 100:
+            if not 1 <= candidate_pool <= 300:
                 raise ValueError
-            if not 0 <= domain_checks <= max_results:
+            if not 0 <= domain_checks <= candidate_pool:
+                raise ValueError
+            if not 1 <= final_results <= candidate_pool:
+                raise ValueError
+            if domain_checks and final_results > domain_checks:
                 raise ValueError
         except ValueError:
             messagebox.showerror(
                 "Invalid search",
-                "Use whole numbers: days >= 1, stars >= 0, max results 1-100, "
-                "and live domain checks between 0 and max results.",
+                "Use whole numbers: days >= 1, stars >= 0, "
+                "candidate pool 1-300, live domain checks 0-candidate pool, "
+                "and final results 1-candidate pool. When live checks are "
+                "enabled, final results cannot exceed live domain checks.",
             )
             return
 
         self.domain_check_limit = domain_checks
+        self.final_result_limit = final_results
 
         self.domain_check_generation += 1
         self.com_checked_rows.clear()
@@ -250,7 +272,7 @@ class RepoRevealApp(tk.Tk):
                 "min_stars": stars,
                 "language": self.language_var.get(),
                 "category": self.category_var.get(),
-                "max_results": max_results,
+                "max_results": candidate_pool,
             },
             daemon=True,
         )
@@ -295,6 +317,13 @@ class RepoRevealApp(tk.Tk):
             )
 
         self._sort_by_score()
+
+        preliminary_limit = (
+            self.domain_check_limit
+            if self.domain_check_limit
+            else self.final_result_limit
+        )
+        self._limit_visible_rows(preliminary_limit)
         self._autofit_columns()
 
         self.search_button.configure(state="normal")
@@ -306,17 +335,23 @@ class RepoRevealApp(tk.Tk):
             finalist_count = min(len(results), self.domain_check_limit)
             if finalist_count:
                 self.status_var.set(
-                    f"Found {len(results)} repositories. "
-                    f"Checking domains for top {finalist_count} candidates..."
+                    f"Scored {len(results)} candidates. "
+                    f"Checking domains for top {finalist_count}..."
                 )
                 self._start_domain_checks(results)
             else:
                 self.status_var.set(
-                    f"Found {len(results)} repositories. "
-                    "Ranking complete; live domain checks disabled."
+                    f"Scored {len(results)} candidates. "
+                    f"Showing top {min(len(results), self.final_result_limit)} "
+                    "candidates; live domain checks disabled."
                 )
         else:
             self.status_var.set("Found 0 repositories.")
+
+    def _limit_visible_rows(self, limit: int) -> None:
+        items = list(self.tree.get_children())
+        for iid in items[limit:]:
+            self.tree.delete(iid)
 
     def _autofit_columns(self) -> None:
         tree_font = tkfont.nametofont("TkDefaultFont")
@@ -511,11 +546,14 @@ class RepoRevealApp(tk.Tk):
         if generation != self.domain_check_generation:
             return
         self._sort_by_score()
+        self._limit_visible_rows(self.final_result_limit)
+
+        visible = len(self.tree.get_children())
+        checked = min(len(self.results), self.domain_check_limit)
         self.status_var.set(
-            f"Found {len(self.results)} repositories. "
-            f"Domain checks complete for top "
-            f"{min(len(self.results), self.domain_check_limit)} "
-            f"candidates ({checked_count} checks)."
+            f"Scored {len(self.results)} candidates. "
+            f"Checked top {checked}; showing {visible} final opportunities "
+            f"({checked_count} domain checks)."
         )
 
     def _sort_by_score(self) -> None:
@@ -623,15 +661,17 @@ class RepoRevealApp(tk.Tk):
                 ]
             )
 
-            for index, repo in enumerate(self.results):
-                iid = str(index)
+            visible_iids = list(self.tree.get_children())
+            for iid in visible_iids:
+                index = int(iid)
+                repo = self.results[index]
                 domain_values = [
-                    self.tree.set(iid, tld) if self.tree.exists(iid) else ""
+                    self.tree.set(iid, tld)
                     for tld in SUPPORTED_TLDS
                 ]
                 writer.writerow(
                     [
-                        self.tree.set(iid, "score") if self.tree.exists(iid) else "",
+                        self.tree.set(iid, "score"),
                         repo.name,
                         repo.full_name,
                         repo.stars,
@@ -645,7 +685,7 @@ class RepoRevealApp(tk.Tk):
                 )
 
         self.status_var.set(
-            f"Exported {len(self.results)} rows to {destination.name}."
+            f"Exported {len(visible_iids)} rows to {destination.name}."
         )
 
 
