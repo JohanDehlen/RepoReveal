@@ -30,6 +30,70 @@ DESCRIPTIVE_FRAGMENTS = {
 DESCRIPTIVE_SUFFIXES = (
     "app", "bot", "chat", "hub", "lab", "player", "studio", "tool", "web",
 )
+
+# Signals that a repository is primarily a derivative, compatibility layer,
+# integration, port, or reproduction of another product/project.
+DERIVATIVE_TERMS = {
+    "clone",
+    "compatibility",
+    "extension",
+    "fork",
+    "frontend",
+    "integration",
+    "mirror",
+    "mod",
+    "plugin",
+    "port",
+    "reimplementation",
+    "replacement",
+    "skin",
+    "theme",
+    "unofficial",
+    "wrapper",
+}
+
+# Established ecosystem/product markers reduce independence as a new brand.
+ESTABLISHED_NAME_MARKERS = {
+    "android": 10, "apple": 10, "arxiv": 14, "chatgpt": 16,
+    "chrome": 12, "claude": 16, "discord": 14, "docker": 12,
+    "facebook": 16, "github": 16, "gitlab": 16, "google": 16,
+    "instagram": 16, "linux": 10, "microsoft": 16, "netflix": 16,
+    "openai": 16, "reddit": 14, "spotify": 16, "telegram": 14,
+    "tiktok": 16, "twitter": 16, "wechat": 18, "whatsapp": 16,
+    "windows": 12, "youtube": 16,
+}
+
+# Common descriptive building blocks. Multiple hits suggest a project label
+# rather than a distinctive standalone brand.
+DESCRIPTIVE_NAME_PARTS = {
+    "audio", "book", "browser", "code", "data", "diff", "feed", "file",
+    "flow", "form", "human", "image", "mail", "motion", "music", "note",
+    "oil", "phone", "photo", "search", "text", "video", "voice", "web",
+    "word", "write", "writing", "harness",
+}
+
+
+GENERIC_PROJECT_MARKERS = {
+    "api": 4, "bot": 5, "cli": 4, "demo": 5, "example": 7,
+    "plugin": 6, "sdk": 5, "server": 4, "template": 8,
+    "tool": 4, "wrapper": 7,
+}
+
+DERIVATIVE_PHRASES = (
+    "alternative to",
+    "compatible with",
+    "drop-in replacement",
+    "drop in replacement",
+    "fork of",
+    "frontend for",
+    "interface for",
+    "plugin for",
+    "port of",
+    "reimplementation of",
+    "replacement for",
+    "theme for",
+    "wrapper for",
+)
 VOWELS = set("aeiouy")
 
 
@@ -104,6 +168,70 @@ def _descriptive_phrase_penalty(term: str, tokens: list[str]) -> int:
         penalty += 5
 
     return penalty
+
+
+def _distinctiveness_penalty(term: str) -> int:
+    compact = term.lower()
+    hits = {part for part in DESCRIPTIVE_NAME_PARTS if part in compact}
+
+    if len(hits) < 2:
+        return 0
+
+    penalty = 6 + (len(hits) - 2) * 3
+    if len(compact) >= 11:
+        penalty += 3
+    return min(15, penalty)
+
+
+def _brand_independence_penalty(term: str) -> int:
+    compact = term.lower()
+    penalty = 0
+    for marker, points in ESTABLISHED_NAME_MARKERS.items():
+        if marker in compact:
+            penalty += points
+    for marker, points in GENERIC_PROJECT_MARKERS.items():
+        if marker in compact:
+            penalty += points
+    if compact.startswith("git") or compact.endswith("git"):
+        penalty += 10
+    if compact.startswith("open") and len(compact) > 6:
+        penalty += 3
+    return min(25, penalty)
+
+
+def _discovery_quality_penalty(repo: Repository) -> int:
+    name_text = repo.name.lower().replace("-", " ").replace("_", " ")
+    description_text = (repo.description or "").lower()
+    combined = f"{name_text} {description_text}"
+
+    words = set(combined.split())
+    term_hits = {
+        term
+        for term in DERIVATIVE_TERMS
+        if term in words
+    }
+
+    phrase_hits = {
+        phrase
+        for phrase in DERIVATIVE_PHRASES
+        if phrase in combined
+    }
+
+    penalty = 0
+
+    if term_hits:
+        penalty += min(12, 5 + (len(term_hits) - 1) * 3)
+
+    if phrase_hits:
+        penalty += min(12, 7 + (len(phrase_hits) - 1) * 3)
+
+    if any(
+        marker in combined
+        for marker in ("emulator", "recomp", "decomp", "reverse engineering")
+    ):
+        penalty += 8
+
+    return min(20, penalty)
 
 
 def _brandability_score(term: str) -> int:
@@ -230,6 +358,9 @@ def score_repository(
         penalties += 8
 
     penalties += _descriptive_phrase_penalty(term, tokens)
+    penalties += _discovery_quality_penalty(repo)
+    penalties += _brand_independence_penalty(term)
+    penalties += _distinctiveness_penalty(term)
 
     candidate_score = max(
         0,

@@ -136,6 +136,149 @@ class RepositoryScoreTests(unittest.TestCase):
             stronger.total,
         )
 
+    def test_independent_project_beats_wrapper_with_same_name_shape(self) -> None:
+        independent = Repository(
+            name="Velora",
+            full_name="owner/Velora",
+            stars=300,
+            created_at="2026-08-09T02:00:00Z",
+            language="Python",
+            description="A new collaborative visual workspace.",
+            html_url="https://github.com/owner/Velora",
+        )
+        wrapper = Repository(
+            name="Velora",
+            full_name="owner/Velora-wrapper",
+            stars=300,
+            created_at="2026-08-09T02:00:00Z",
+            language="Python",
+            description="A lightweight wrapper for an existing API.",
+            html_url="https://github.com/owner/Velora-wrapper",
+        )
+
+        independent_score = score_repository(
+            independent,
+            "velora",
+            now=NOW,
+        )
+        wrapper_score = score_repository(
+            wrapper,
+            "velora",
+            now=NOW,
+        )
+
+        self.assertGreater(
+            independent_score.candidate_score,
+            wrapper_score.candidate_score,
+        )
+        self.assertGreater(wrapper_score.penalties, independent_score.penalties)
+
+    def test_emulator_project_receives_discovery_penalty(self) -> None:
+        independent = Repository(
+            name="Eden",
+            full_name="owner/Eden",
+            stars=300,
+            created_at="2026-08-09T02:00:00Z",
+            language="C++",
+            description="Original real-time simulation engine.",
+            html_url="https://github.com/owner/Eden",
+        )
+        emulator = Repository(
+            name="Eden-Emulator",
+            full_name="owner/Eden-Emulator",
+            stars=300,
+            created_at="2026-08-09T02:00:00Z",
+            language="C++",
+            description="Emulator and compatibility project.",
+            html_url="https://github.com/owner/Eden-Emulator",
+        )
+
+        clean = score_repository(independent, "eden", now=NOW)
+        derivative = score_repository(
+            emulator,
+            "edenemulator",
+            now=NOW,
+        )
+
+        self.assertGreater(clean.candidate_score, derivative.candidate_score)
+        self.assertGreaterEqual(derivative.penalties, 8)
+
+    def test_reimplementation_phrase_is_penalized(self) -> None:
+        original = Repository(
+            name="Lumera",
+            full_name="owner/Lumera",
+            stars=100,
+            created_at="2026-08-09T02:00:00Z",
+            language="Rust",
+            description="A new graphics toolkit.",
+            html_url="https://github.com/owner/Lumera",
+        )
+        reimplementation = Repository(
+            name="Lumera",
+            full_name="owner/Lumera-reimpl",
+            stars=100,
+            created_at="2026-08-09T02:00:00Z",
+            language="Rust",
+            description="A reimplementation of an existing graphics toolkit.",
+            html_url="https://github.com/owner/Lumera-reimpl",
+        )
+
+        clean = score_repository(original, "lumera", now=NOW)
+        derivative = score_repository(
+            reimplementation,
+            "lumera",
+            now=NOW,
+        )
+
+        self.assertGreater(clean.candidate_score, derivative.candidate_score)
+
+    def test_git_prefixed_name_loses_brand_independence(self) -> None:
+        clean = Repository(name="Knife", full_name="owner/Knife", stars=200, created_at="2026-08-10T02:00:00Z", language="TypeScript", description="A focused developer utility.", html_url="https://github.com/owner/Knife")
+        tied = Repository(name="git-knife", full_name="owner/git-knife", stars=200, created_at="2026-08-10T02:00:00Z", language="TypeScript", description="A focused developer utility.", html_url="https://github.com/owner/git-knife")
+        clean_score = score_repository(clean, "knife", now=NOW)
+        tied_score = score_repository(tied, "gitknife", now=NOW)
+        self.assertGreater(clean_score.candidate_score, tied_score.candidate_score)
+        self.assertGreater(tied_score.penalties, clean_score.penalties)
+
+    def test_arxiv_name_receives_established_marker_penalty(self) -> None:
+        repo = Repository(name="neuroarxiv", full_name="owner/neuroarxiv", stars=300, created_at="2026-08-09T02:00:00Z", language="Python", description="Research workflow software.", html_url="https://github.com/owner/neuroarxiv")
+        result = score_repository(repo, "neuroarxiv", now=NOW)
+        self.assertGreaterEqual(result.penalties, 14)
+
+    def test_existing_brand_name_is_heavily_penalized(self) -> None:
+        repo = Repository(name="WeChat-AI", full_name="owner/WeChat-AI", stars=1500, created_at="2026-08-10T02:00:00Z", language="TypeScript", description="AI integration project.", html_url="https://github.com/owner/WeChat-AI")
+        result = score_repository(repo, "wechat", now=NOW)
+        self.assertGreaterEqual(result.penalties, 18)
+
+    def test_distinctive_name_avoids_independence_penalty(self) -> None:
+        repo = Repository(name="Limioryn", full_name="owner/Limioryn", stars=135, created_at="2026-08-07T02:00:00Z", language="Python", description="Independent edge-cloud framework.", html_url="https://github.com/owner/Limioryn")
+        result = score_repository(repo, "limioryn", now=NOW)
+        self.assertEqual(result.penalties, 0)
+
+    def test_descriptive_compound_loses_to_distinctive_name(self) -> None:
+        distinctive = Repository(name="Limioryn", full_name="owner/Limioryn", stars=200, created_at="2026-08-09T02:00:00Z", language="Python", description="Independent software project.", html_url="https://github.com/owner/Limioryn")
+        descriptive = Repository(name="phone-harness", full_name="owner/phone-harness", stars=200, created_at="2026-08-09T02:00:00Z", language="Python", description="Independent software project.", html_url="https://github.com/owner/phone-harness")
+        brand = score_repository(distinctive, "limioryn", now=NOW)
+        compound = score_repository(descriptive, "phoneharness", now=NOW)
+        self.assertGreater(brand.candidate_score, compound.candidate_score)
+        self.assertGreater(compound.penalties, brand.penalties)
+
+    def test_oilmotion_receives_distinctiveness_penalty(self) -> None:
+        repo = Repository(name="oil-motion", full_name="owner/oil-motion", stars=200, created_at="2026-08-09T02:00:00Z", language="Python", description="Interactive animation project.", html_url="https://github.com/owner/oil-motion")
+        result = score_repository(repo, "oilmotion", now=NOW)
+        self.assertGreaterEqual(result.penalties, 6)
+
+    def test_humanwriting_receives_distinctiveness_penalty(self) -> None:
+        repo = Repository(name="human-writing", full_name="owner/human-writing", stars=200, created_at="2026-08-09T02:00:00Z", language="Python", description="Writing software.", html_url="https://github.com/owner/human-writing")
+        result = score_repository(repo, "humanwriting", now=NOW)
+        self.assertGreaterEqual(result.penalties, 6)
+
+    def test_short_distinctive_names_are_not_hit(self) -> None:
+        for name in ("limioryn", "kadath", "vocat", "kage"):
+            repo = Repository(name=name, full_name=f"owner/{name}", stars=100, created_at="2026-08-09T02:00:00Z", language="Python", description="Independent software project.", html_url=f"https://github.com/owner/{name}")
+            result = score_repository(repo, name, now=NOW)
+            self.assertEqual(result.penalties, 0, f"{name} should not receive a distinctiveness penalty")
+
 
 if __name__ == "__main__":
     unittest.main()
