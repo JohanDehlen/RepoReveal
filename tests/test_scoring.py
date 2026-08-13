@@ -1,8 +1,8 @@
 import unittest
 from datetime import datetime, timezone
 
-from reporeveal.models import Repository
-from reporeveal.scoring import score_repository
+from reporip.models import Repository
+from reporip.scoring import score_repository
 
 NOW = datetime(2026, 8, 12, 2, 0, tzinfo=timezone.utc)
 

@@ -38,7 +38,7 @@ class CollisionResult:
 def _headers(token: str | None) -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "RepoReveal/0.1",
+        "User-Agent": "RepoRip/0.1",
     }
     token = token or os.environ.get("GITHUB_TOKEN")
     if token:

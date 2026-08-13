@@ -65,7 +65,7 @@ def candidate_domains(repo_name: str) -> tuple[str, ...]:
 def _rdap_bootstrap_url(tld: str, timeout: float) -> str | None:
     request = urllib.request.Request(
         "https://data.iana.org/rdap/dns.json",
-        headers={"User-Agent": "RepoReveal/0.1"},
+        headers={"User-Agent": "RepoRip/0.1"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         payload = json.load(response)
@@ -135,7 +135,7 @@ def check_domain_rdap(domain: str, *, timeout: float = 8.0) -> DomainResult:
             url,
             headers={
                 "Accept": "application/rdap+json, application/json",
-                "User-Agent": "RepoReveal/0.1",
+                "User-Agent": "RepoRip/0.1",
             },
         )
         with urllib.request.urlopen(request, timeout=timeout):

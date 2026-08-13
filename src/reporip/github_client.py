@@ -84,7 +84,7 @@ def search_repositories(
 
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "RepoReveal/0.1",
+        "User-Agent": "RepoRip/0.1",
     }
 
     token = token or os.environ.get("GITHUB_TOKEN")

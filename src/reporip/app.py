@@ -27,10 +27,10 @@ from .scoring import score_repository
 from .settings import load_window_geometry, save_window_geometry
 
 
-class RepoRevealApp(tk.Tk):
+class RepoRipApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("RepoReveal")
+        self.title("RepoRip")
         self._saved_window_geometry = load_window_geometry(default="1120x650")
         self.geometry("1120x650")
         self.minsize(900, 520)
@@ -64,14 +64,14 @@ class RepoRevealApp(tk.Tk):
 
         title = ttk.Label(
             outer,
-            text="RepoReveal",
+            text="RepoRip",
             font=("Segoe UI", 20, "bold"),
         )
         title.pack(anchor="w")
 
         subtitle = ttk.Label(
             outer,
-            text="Discover promising names among recently created GitHub repositories.",
+            text="Discover emerging project names before everyone else.",
         )
         subtitle.pack(anchor="w", pady=(0, 12))
 
@@ -933,10 +933,10 @@ class RepoRevealApp(tk.Tk):
             return
 
         path = filedialog.asksaveasfilename(
-            title="Export RepoReveal results",
+            title="Export RepoRip results",
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv")],
-            initialfile="reporeveal-results.csv",
+            initialfile="reporip-results.csv",
         )
         if not path:
             return
@@ -990,7 +990,7 @@ class RepoRevealApp(tk.Tk):
 
 
 def main() -> None:
-    app = RepoRevealApp()
+    app = RepoRipApp()
     app.mainloop()
 
 

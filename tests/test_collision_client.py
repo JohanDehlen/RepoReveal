@@ -4,7 +4,7 @@ import unittest
 from urllib.error import HTTPError
 from unittest.mock import patch
 
-from reporeveal.collision_client import (
+from reporip.collision_client import (
     GitHubCollisionError,
     check_github_collision,
 )
@@ -48,7 +48,7 @@ class CollisionTests(unittest.TestCase):
         user_payload = {"login": "repodiver"}
 
         with patch(
-            "reporeveal.collision_client.urlopen",
+            "reporip.collision_client.urlopen",
             side_effect=[
                 response(repository_payload),
                 response(user_payload),
@@ -83,7 +83,7 @@ class CollisionTests(unittest.TestCase):
         )
 
         with patch(
-            "reporeveal.collision_client.urlopen",
+            "reporip.collision_client.urlopen",
             side_effect=[
                 response({"items": []}),
                 error,
@@ -104,7 +104,7 @@ class CollisionTests(unittest.TestCase):
         )
 
         with patch(
-            "reporeveal.collision_client.urlopen",
+            "reporip.collision_client.urlopen",
             side_effect=error,
         ):
             with self.assertRaises(GitHubCollisionError):
@@ -145,7 +145,7 @@ class CollisionTests(unittest.TestCase):
         )
 
         with patch(
-            "reporeveal.collision_client.urlopen",
+            "reporip.collision_client.urlopen",
             side_effect=[
                 response(repository_payload),
                 account_404,

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from reporeveal.settings import (
+from reporip.settings import (
     is_valid_geometry,
     load_window_geometry,
     save_window_geometry,
@@ -24,13 +24,13 @@ class WindowSettingsTests(unittest.TestCase):
         with patch.dict(os.environ, {"LOCALAPPDATA": r"C:\Temp\Local"}, clear=False):
             self.assertEqual(
                 settings_path(),
-                Path(r"C:\Temp\Local") / "RepoReveal" / "settings.json",
+                Path(r"C:\Temp\Local") / "RepoRip" / "settings.json",
             )
 
     def test_round_trip_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             fake_path = Path(temp_dir) / "settings.json"
-            with patch("reporeveal.settings.settings_path", return_value=fake_path):
+            with patch("reporip.settings.settings_path", return_value=fake_path):
                 save_window_geometry("1280x720+20+30")
                 self.assertEqual(
                     load_window_geometry(),
@@ -41,7 +41,7 @@ class WindowSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             fake_path = Path(temp_dir) / "settings.json"
             fake_path.write_text("{bad json", encoding="utf-8")
-            with patch("reporeveal.settings.settings_path", return_value=fake_path):
+            with patch("reporip.settings.settings_path", return_value=fake_path):
                 self.assertEqual(
                     load_window_geometry(default="900x600"),
                     "900x600",
@@ -54,7 +54,7 @@ class WindowSettingsTests(unittest.TestCase):
                 json.dumps({"window_geometry": "broken"}),
                 encoding="utf-8",
             )
-            with patch("reporeveal.settings.settings_path", return_value=fake_path):
+            with patch("reporip.settings.settings_path", return_value=fake_path):
                 self.assertEqual(
                     load_window_geometry(default="900x600"),
                     "900x600",

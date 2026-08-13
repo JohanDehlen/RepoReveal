@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
-from reporeveal.github_client import build_search_query, search_repositories
+from reporip.github_client import build_search_query, search_repositories
 
 
 class BuildSearchQueryTests(unittest.TestCase):
@@ -81,7 +81,7 @@ class SearchRepositoriesTests(unittest.TestCase):
         ]
 
         with patch(
-            "reporeveal.github_client.urlopen",
+            "reporip.github_client.urlopen",
             side_effect=pages,
         ) as mocked:
             results = search_repositories(

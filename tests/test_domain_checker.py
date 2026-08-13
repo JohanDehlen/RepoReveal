@@ -4,7 +4,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from reporeveal.domain_checker import (
+from reporip.domain_checker import (
     DomainStatus,
     SUPPORTED_TLDS,
     candidate_domains,
@@ -40,10 +40,10 @@ class DomainNameTests(unittest.TestCase):
         self.assertEqual(normalize_repo_name("telecom"), "telecom")
 
     def test_builds_all_supported_candidates(self) -> None:
-        domains = candidate_domains("RepoReveal")
+        domains = candidate_domains("RepoRip")
         self.assertEqual(len(domains), 8)
-        self.assertEqual(domains[0], "reporeveal.com")
-        self.assertEqual(domains[-1], "reporeveal.site")
+        self.assertEqual(domains[0], "reporip.com")
+        self.assertEqual(domains[-1], "reporip.site")
         self.assertEqual(
             SUPPORTED_TLDS,
             ("com", "net", "org", "dev", "io", "ai", "online", "site"),
@@ -81,7 +81,7 @@ class IoWhoisTests(unittest.TestCase):
             b"Domain Name: example.io\r\nRegistry Domain ID: REDACTED\r\n"
         )
         with patch(
-            "reporeveal.domain_checker.socket.create_connection",
+            "reporip.domain_checker.socket.create_connection",
             return_value=fake,
         ):
             result = check_domain_io_whois("example.io")
@@ -91,7 +91,7 @@ class IoWhoisTests(unittest.TestCase):
     def test_unregistered_io_is_available(self) -> None:
         fake = FakeSocket(b"Domain not found.\r\n")
         with patch(
-            "reporeveal.domain_checker.socket.create_connection",
+            "reporip.domain_checker.socket.create_connection",
             return_value=fake,
         ):
             result = check_domain_io_whois("unlikely-name.io")
@@ -100,7 +100,7 @@ class IoWhoisTests(unittest.TestCase):
     def test_unrecognized_io_response_is_unknown(self) -> None:
         fake = FakeSocket(b"Temporary service message\r\n")
         with patch(
-            "reporeveal.domain_checker.socket.create_connection",
+            "reporip.domain_checker.socket.create_connection",
             return_value=fake,
         ):
             result = check_domain_io_whois("example.io")
@@ -114,7 +114,7 @@ class RdapTests(unittest.TestCase):
 
     def test_existing_domain_is_taken(self) -> None:
         with patch(
-            "reporeveal.domain_checker.urllib.request.urlopen",
+            "reporip.domain_checker.urllib.request.urlopen",
             side_effect=[self._bootstrap(), FakeResponse({})],
         ):
             result = check_domain_rdap("example.com")
@@ -129,7 +129,7 @@ class RdapTests(unittest.TestCase):
             io.BytesIO(),
         )
         with patch(
-            "reporeveal.domain_checker.urllib.request.urlopen",
+            "reporip.domain_checker.urllib.request.urlopen",
             side_effect=[self._bootstrap(), error],
         ):
             result = check_domain_rdap("example.com")
@@ -144,7 +144,7 @@ class RdapTests(unittest.TestCase):
             io.BytesIO(),
         )
         with patch(
-            "reporeveal.domain_checker.urllib.request.urlopen",
+            "reporip.domain_checker.urllib.request.urlopen",
             side_effect=[self._bootstrap(), error],
         ):
             result = check_domain_rdap("example.com")

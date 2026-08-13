@@ -2,7 +2,7 @@
 
 ## Project purpose
 
-RepoReveal discovers interesting GitHub repository names. A later checkpoint will compare candidate names with domain availability.
+RepoRip discovers interesting GitHub repository names. A later checkpoint will compare candidate names with domain availability.
 
 ## Current scope
 
@@ -10,9 +10,9 @@ Checkpoint 1 is GitHub discovery only. Do not add domain lookup, scraping, datab
 
 ## Architecture
 
-- `src/reporeveal/app.py` - Tkinter desktop UI.
-- `src/reporeveal/github_client.py` - GitHub REST search client and query construction.
-- `src/reporeveal/models.py` - application data models.
+- `src/reporip/app.py` - Tkinter desktop UI.
+- `src/reporip/github_client.py` - GitHub REST search client and query construction.
+- `src/reporip/models.py` - application data models.
 - `tests/` - deterministic unit tests.
 
 Keep network/API logic separate from GUI logic.
@@ -31,7 +31,7 @@ Run:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python -m reporeveal.app
+python -m reporip.app
 ```
 
 Tests:

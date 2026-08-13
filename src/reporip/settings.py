@@ -12,8 +12,8 @@ _GEOMETRY_PATTERN = re.compile(r"^\d+x\d+(?:[+-]\d+){2}$")
 def settings_path() -> Path:
     base = os.environ.get("LOCALAPPDATA")
     if base:
-        return Path(base) / "RepoReveal" / "settings.json"
-    return Path.home() / ".reporeveal" / "settings.json"
+        return Path(base) / "RepoRip" / "settings.json"
+    return Path.home() / ".reporip" / "settings.json"
 
 
 def is_valid_geometry(value: object) -> bool:
