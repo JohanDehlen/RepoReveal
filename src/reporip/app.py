@@ -60,8 +60,89 @@ class RepoRipApp(tk.Tk):
         self.score_explanation_var = tk.StringVar(value="")
         self.com_checked_rows: set[int] = set()
 
+        self._build_menu()
         self._build_ui()
         self.after_idle(self._restore_window_geometry)
+
+    def _build_menu(self) -> None:
+        menu_bar = tk.Menu(self)
+
+        file_menu = tk.Menu(menu_bar, tearoff=False)
+        file_menu.add_command(
+            label="Export CSV",
+            command=self._export_csv,
+        )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Exit",
+            command=self._on_close,
+        )
+        menu_bar.add_cascade(label="File", menu=file_menu)
+
+        tools_menu = tk.Menu(menu_bar, tearoff=False)
+        tools_menu.add_command(
+            label="Check selected GitHub name",
+            command=self._start_selected_collision_check,
+        )
+        tools_menu.add_command(
+            label="View GitHub name matches",
+            command=self._view_selected_collision_matches,
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Analyze business potential",
+            command=self._analyze_selected_business_potential,
+        )
+        menu_bar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menu_bar, tearoff=False)
+        help_menu.add_command(
+            label="How RepoRip works",
+            command=self._show_how_it_works,
+        )
+        help_menu.add_command(
+            label="Open RepoRip on GitHub",
+            command=self._open_reporip_github,
+        )
+        help_menu.add_separator()
+        help_menu.add_command(
+            label="About RepoRip",
+            command=self._show_about,
+        )
+        menu_bar.add_cascade(label="Help", menu=help_menu)
+
+        self.configure(menu=menu_bar)
+
+    def _show_about(self) -> None:
+        messagebox.showinfo(
+            "About RepoRip",
+            (
+                "RepoRip 0.1.0\n\n"
+                "Discover emerging GitHub projects, names, domains, "
+                "and business opportunities.\n\n"
+                "© Johan Dehlen"
+            ),
+        )
+
+    def _show_how_it_works(self) -> None:
+        messagebox.showinfo(
+            "How RepoRip works",
+            (
+                "Candidate Score\n"
+                "Ranks repositories before domain checks using name quality, "
+                "brandability, momentum, and independence.\n\n"
+                "Opportunity Score\n"
+                "Adds live domain availability to the candidate ranking.\n\n"
+                "Business Potential\n"
+                "Uses GitHub repository evidence and README content to form a "
+                "separate commercial hypothesis. Observed evidence, inference, "
+                "and hypotheses are kept distinct."
+            ),
+        )
+
+    @staticmethod
+    def _open_reporip_github() -> None:
+        webbrowser.open("https://github.com/JohanDehlen/RepoRip")
 
     def _build_ui(self) -> None:
         outer = ttk.Frame(self, padding=12)
