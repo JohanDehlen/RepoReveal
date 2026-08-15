@@ -1,7 +1,7 @@
 # RepoRip
 
-RepoRip is a local discovery tool for finding newly emerging GitHub project
-names that may represent interesting naming and domain opportunities.
+RepoRip is a local discovery tool for finding newly emerging GitHub projects
+that may represent interesting naming, domain, and business opportunities.
 
 ## MVP workflow
 
@@ -14,6 +14,8 @@ RepoRip can:
 - rank final opportunities using candidate quality plus `.com` availability;
 - inspect exact-name GitHub repository and account collisions;
 - browse matching GitHub repositories;
+- analyze a selected repository's business potential using README and GitHub evidence;
+- separate observed evidence, inference, and commercial hypotheses;
 - export the visible final opportunities to CSV.
 
 ## Run locally
@@ -38,4 +40,4 @@ API requests. Never commit tokens, `.env` files, credentials, or other secrets.
 
 ## Project status
 
-RepoRip is currently an MVP under active development.
+RepoRip v0.1.0 is the first working MVP. It is under active development.

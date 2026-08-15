@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reporip"
 version = "0.1.0"
-description = "Discover promising GitHub repository names."
+description = "Discover emerging GitHub projects, names, and business opportunities."
 requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]
