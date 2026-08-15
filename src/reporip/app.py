@@ -23,6 +23,11 @@ from .collision_client import (
 )
 from .github_client import GitHubSearchError, search_repositories
 from .models import Repository
+from .business_potential import analyze_business_potential
+from .business_client import (
+    BusinessEvidenceError,
+    fetch_repository_business_evidence,
+)
 from .scoring import score_repository
 from .settings import load_window_geometry, save_window_geometry
 
@@ -136,6 +141,13 @@ class RepoRipApp(tk.Tk):
             state="disabled",
         )
         self.collision_matches_button.pack(side="left", padx=(8, 0))
+
+        self.business_button = ttk.Button(
+            name_check_bar,
+            text="Analyze business potential",
+            command=self._analyze_selected_business_potential,
+        )
+        self.business_button.pack(side="left", padx=(8, 0))
 
         ttk.Label(
             name_check_bar,
@@ -676,6 +688,126 @@ class RepoRipApp(tk.Tk):
         if result.exact_account:
             parts.append("Account")
         return " + ".join(parts) if parts else "Clear"
+
+    def _analyze_selected_business_potential(self) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Business potential", "Select a repository first.")
+            return
+        try:
+            repo = self.results[int(selection[0])]
+        except (IndexError, ValueError):
+            return
+
+        self.business_button.configure(state="disabled")
+        self.status_var.set(f"Reading repository evidence for {repo.name}...")
+
+        thread = threading.Thread(
+            target=self._business_analysis_worker,
+            args=(repo,),
+            daemon=True,
+        )
+        thread.start()
+
+    def _business_analysis_worker(self, repo: Repository) -> None:
+        try:
+            evidence = fetch_repository_business_evidence(repo, timeout=8.0)
+            report = analyze_business_potential(repo, evidence)
+        except (BusinessEvidenceError, ValueError) as exc:
+            self.after(0, self._business_analysis_failed, repo, str(exc))
+            return
+        self.after(0, self._show_business_potential, repo, report)
+
+    def _business_analysis_failed(self, repo: Repository, message: str) -> None:
+        self.business_button.configure(state="normal")
+        self.status_var.set(f"Business evidence fetch failed for {repo.name}.")
+        messagebox.showerror(
+            "Business potential",
+            f"Could not fetch richer GitHub evidence for {repo.full_name}.\n\n{message}",
+        )
+
+    def _show_business_potential(self, repo: Repository, report: object) -> None:
+        self.business_button.configure(state="normal")
+
+        window = tk.Toplevel(self)
+        window.title(f"Business potential - {repo.name}")
+        window.geometry("900x680")
+        window.minsize(720, 520)
+
+        outer = ttk.Frame(window, padding=12)
+        outer.pack(fill="both", expand=True)
+
+        ttk.Label(
+            outer,
+            text=f"Business Potential {report.score}/100",
+            font=("Segoe UI", 16, "bold"),
+        ).pack(anchor="w")
+
+        ttk.Label(
+            outer,
+            text=(
+                f"Evidence confidence: {report.confidence}    |    "
+                f"Archetype: {report.archetype}"
+            ),
+        ).pack(anchor="w", pady=(2, 3))
+
+        ttk.Label(
+            outer,
+            text=(
+                f"Pain {report.pain_score}/25  |  "
+                f"Buyer {report.buyer_score}/20  |  "
+                f"Product {report.product_score}/20  |  "
+                f"Reach {report.reach_score}/15  |  "
+                f"Momentum {report.momentum_score}/20"
+            ),
+        ).pack(anchor="w", pady=(0, 10))
+
+        body = ttk.Frame(outer)
+        body.pack(fill="both", expand=True)
+
+        text_widget = tk.Text(body, wrap="word", padx=10, pady=10)
+        scroll = ttk.Scrollbar(
+            body,
+            orient="vertical",
+            command=text_widget.yview,
+        )
+        text_widget.configure(yscrollcommand=scroll.set)
+        text_widget.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        sections = [
+            ("LIKELY BUYER", report.likely_buyer),
+            ("PURCHASED VALUE", report.purchased_value),
+            ("BUSINESS MODEL CANDIDATE", report.business_model),
+            ("FIRST VALIDATION MOVE", report.validation_move),
+            (
+                "OBSERVED",
+                "\n".join(f"• {item}" for item in report.observed),
+            ),
+            (
+                "INFERRED",
+                "\n".join(f"• {item}" for item in report.inferred),
+            ),
+            (
+                "HYPOTHESES",
+                "\n".join(f"• {item}" for item in report.hypotheses),
+            ),
+        ]
+
+        for heading, body_text in sections:
+            text_widget.insert("end", heading + "\n", "heading")
+            text_widget.insert("end", body_text + "\n\n")
+
+        text_widget.tag_configure(
+            "heading",
+            font=("Segoe UI", 10, "bold"),
+        )
+        text_widget.configure(state="disabled")
+
+        self.status_var.set(
+            f"{repo.name}: Business Potential {report.score}/100 "
+            f"(evidence confidence {report.confidence})."
+        )
 
     def _start_selected_collision_check(self) -> None:
         selection = self.tree.selection()
